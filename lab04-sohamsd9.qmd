@@ -1,0 +1,118 @@
+title: "Job Postings Data Analysis"
+author:
+  - name: "Soham Deshkhaire"
+    affiliations:
+      - id: bu
+        name: "Boston University"
+        city: "Boston"
+        state: "MA"
+number-sections: true
+date: today
+format:
+  html:
+    theme: cerulean
+    toc: true
+    toc-depth: 2
+  docx: default
+execute:
+  echo: true
+  eval: true
+  freeze: auto
+
+output-dir: "/lab04-KRITISIN-GH"
+---
+
+## Step 2: Load and Explore the Dataset
+
+{python}
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, to_date, count, avg, desc
+import pandas as pd
+
+# Start a Spark session
+spark = SparkSession.builder.appName("JobPostingsAnalysis").getOrCreate()
+
+# Load the CSV file into a Spark DataFrame
+df = spark.read.option("header", "true").option("inferSchema", "true").option("multiLine", "true").option("escape", "\"").csv("data/lightcast_job_postings.csv")
+
+# Show schema and first few rows
+df.printSchema()
+df.show(5)
+
+
+# Remove duplicate entries
+# df = df.dropDuplicates()
+
+
+{python}
+# Handle missing values (replace missing salaries with median)
+if "salary" in df.columns:
+    median_salary = df.approxQuantile("salary", [0.5], 0.0)[0]
+    df = df.fillna({"salary": median_salary})
+
+# Convert date columns to proper datetime format
+if "date_posted" in df.columns:
+    df = df.withColumn("date_posted", to_date(col("date_posted"), "yyyy-MM-dd"))
+
+# Show results of cleaning
+df.show(5)
+
+
+from pyspark.sql.functions import count, avg, desc
+import pandas as pd
+
+# 1 Count Total Job Postings
+total_jobs = df.count()
+total_jobs_df = pd.DataFrame({"Total Job Postings": [total_jobs]})
+display(total_jobs_df.style.hide(axis="index").set_caption("Count of Total Job Postings"))
+
+# 2 Top 5 Job Titles
+if "TITLE_RAW" in df.columns:
+    top_titles = (
+        df.groupBy("TITLE_RAW")
+        .count()
+        .orderBy(desc("count"))
+        .limit(5)
+        .toPandas()
+        .rename(columns={"TITLE_RAW": "Job Title", "count": "Postings"})
+    )
+    display(top_titles.style.hide(axis="index").set_caption("Top 5 Job Titles"))
+
+# 3 Average Salary by Employment Type
+salary_col = None
+jobtype_col = None
+for colname in df.columns:
+    if "SALARY" in colname.upper():
+        salary_col = colname
+    if "EMPLOYMENT" in colname.upper() or "TYPE" in colname.upper():
+        jobtype_col = colname
+
+if salary_col and jobtype_col:
+    avg_salary = (
+        df.groupBy(jobtype_col)
+        .agg(avg(salary_col).alias("Average Salary"))
+        .orderBy(desc("Average Salary"))
+        .toPandas()
+        .rename(columns={jobtype_col: "Job Type"})
+    )
+    display(avg_salary.style.hide(axis="index").set_caption("Average Salary by Job Type"))
+
+
+# 4 Top 5 States by Job Postings
+state_col = None
+for colname in df.columns:
+    if "STATE" in colname.upper():
+        state_col = colname
+        break
+
+if state_col:
+    top_state = (
+        df.groupBy(state_col)
+        .count()
+        .orderBy(desc("count"))
+        .limit(1)
+        .toPandas()
+        .rename(columns={state_col: "State", "count": "Postings"})
+    )
+    display(top_state.style.hide(axis="index").set_caption("State with the Most Job Postings"))
+
