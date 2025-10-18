@@ -1,30 +1,22 @@
+---
 title: "Job Postings Data Analysis"
 author:
   - name: "Soham Deshkhaire"
-    affiliations:
-      - id: bu
-        name: "Boston University"
-        city: "Boston"
-        state: "MA"
-number-sections: true
-date: today
 format:
-  html:
-    theme: cerulean
+  docx:
     toc: true
-    toc-depth: 2
-  docx: default
+    number-sections: true
+jupyter: python3
 execute:
   echo: true
-  eval: true
-  freeze: auto
+  warning: false
+  cache: false
 
-output-dir: "/lab04-KRITISIN-GH"
 ---
 
 ## Step 2: Load and Explore the Dataset
 
-{python}
+```{python}
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, to_date, count, avg, desc
 import pandas as pd
@@ -39,80 +31,109 @@ df = spark.read.option("header", "true").option("inferSchema", "true").option("m
 df.printSchema()
 df.show(5)
 
-
-# Remove duplicate entries
-# df = df.dropDuplicates()
-
-
-{python}
-# Handle missing values (replace missing salaries with median)
+# Impute missing salary values using the median salary
 if "salary" in df.columns:
-    median_salary = df.approxQuantile("salary", [0.5], 0.0)[0]
-    df = df.fillna({"salary": median_salary})
+    salary_median = df.approxQuantile("salary", [0.5], 0.0)[0]
+    df = df.na.fill({"salary": salary_median})
 
-# Convert date columns to proper datetime format
+# Parse posting date strings into proper date type
 if "date_posted" in df.columns:
-    df = df.withColumn("date_posted", to_date(col("date_posted"), "yyyy-MM-dd"))
+    df = df.withColumn(
+        "date_posted",
+        to_date(col("date_posted"), "yyyy-MM-dd")
+    )
 
-# Show results of cleaning
-df.show(5)
-
+# Preview a few cleaned records
+df.limit(5).show()
 
 from pyspark.sql.functions import count, avg, desc
 import pandas as pd
 
-# 1 Count Total Job Postings
-total_jobs = df.count()
-total_jobs_df = pd.DataFrame({"Total Job Postings": [total_jobs]})
-display(total_jobs_df.style.hide(axis="index").set_caption("Count of Total Job Postings"))
+# 1. Compute how many job postings are in the dataset
+job_posting_cnt = df.count()
+summary_df = pd.DataFrame({"Number of Job Postings": [job_posting_cnt]})
+display(
+    summary_df.style.hide(axis="index")
+    .set_caption("Total Job Postings in Dataset")
+)
 
-# 2 Top 5 Job Titles
+# 2. Find the five most frequent job titles
 if "TITLE_RAW" in df.columns:
-    top_titles = (
+    title_freq = (
         df.groupBy("TITLE_RAW")
-        .count()
-        .orderBy(desc("count"))
-        .limit(5)
-        .toPandas()
-        .rename(columns={"TITLE_RAW": "Job Title", "count": "Postings"})
+          .agg(count("*").alias("posting_count"))
+          .orderBy(desc("posting_count"))
+          .limit(5)
+          .toPandas()
     )
-    display(top_titles.style.hide(axis="index").set_caption("Top 5 Job Titles"))
 
-# 3 Average Salary by Employment Type
-salary_col = None
-jobtype_col = None
-for colname in df.columns:
-    if "SALARY" in colname.upper():
-        salary_col = colname
-    if "EMPLOYMENT" in colname.upper() or "TYPE" in colname.upper():
-        jobtype_col = colname
-
-if salary_col and jobtype_col:
-    avg_salary = (
-        df.groupBy(jobtype_col)
-        .agg(avg(salary_col).alias("Average Salary"))
-        .orderBy(desc("Average Salary"))
-        .toPandas()
-        .rename(columns={jobtype_col: "Job Type"})
+    title_freq = title_freq.rename(
+        columns={
+            "TITLE_RAW": "Job Title",
+            "posting_count": "Postings"
+        }
     )
-    display(avg_salary.style.hide(axis="index").set_caption("Average Salary by Job Type"))
+
+    display(
+        title_freq.style.hide(axis="index")
+        .set_caption("Top 5 Most Common Job Titles")
+    )
 
 
-# 4 Top 5 States by Job Postings
-state_col = None
-for colname in df.columns:
-    if "STATE" in colname.upper():
-        state_col = colname
+from pyspark.sql.functions import avg, desc
+import pandas as pd
+
+# 3. Compute mean salary grouped by employment category
+salary_field = None
+employment_field = None
+
+# Try to automatically detect the salary and employment-type columns
+for col_name in df.columns:
+    upper_name = col_name.upper()
+    if "SALARY" in upper_name:
+        salary_field = col_name
+    if "EMPLOYMENT" in upper_name or "TYPE" in upper_name:
+        employment_field = col_name
+
+# If both columns are found, calculate the average salary per job type
+if salary_field and employment_field:
+    salary_by_type = (
+        df.groupBy(employment_field)
+          .agg(avg(salary_field).alias("Average Salary"))
+          .orderBy(desc("Average Salary"))
+          .toPandas()
+          .rename(columns={employment_field: "Job Type"})
+    )
+
+    display(
+        salary_by_type.style.hide(axis="index")
+        .set_caption("Average Salary by Employment Type")
+    )
+
+from pyspark.sql.functions import count, desc
+import pandas as pd
+
+# 4. Identify the state that has the highest number of job postings
+state_field = None
+
+# Look for a column that appears to hold state information
+for col_name in df.columns:
+    if "STATE" in col_name.upper():
+        state_field = col_name
         break
 
-if state_col:
-    top_state = (
-        df.groupBy(state_col)
-        .count()
-        .orderBy(desc("count"))
-        .limit(1)
-        .toPandas()
-        .rename(columns={state_col: "State", "count": "Postings"})
+# If a state column is present, compute posting counts per state
+if state_field:
+    most_active_state = (
+        df.groupBy(state_field)
+          .agg(count("*").alias("Postings"))
+          .orderBy(desc("Postings"))
+          .limit(1)
+          .toPandas()
+          .rename(columns={state_field: "State"})
     )
-    display(top_state.style.hide(axis="index").set_caption("State with the Most Job Postings"))
 
+    display(
+        most_active_state.style.hide(axis="index")
+        .set_caption("State with the Highest Number of Job Postings")
+    )
